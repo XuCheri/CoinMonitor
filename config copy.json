@@ -1,0 +1,12 @@
+{
+  "bot_token": "1",
+  "chat_id": 1,
+  "message_threads": {
+    "funding_rate": 1,
+    "spot_inflow": 1,
+    "other": 1
+  },
+  "funding_rate_threshold": 0.001,
+  "check_interval": 60,
+  "spot_inflow_interval": 300
+}
