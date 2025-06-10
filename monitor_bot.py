@@ -35,12 +35,12 @@ async def main():
     ]
 
     # 如果配置了推特监控所需信息，启用推特监控
-    if twitter_bearer_token and twitter_user_id:
-        tasks.append(
-            asyncio.create_task(
-                twitter_monitor.run_monitor(bot_token, chat_id, thread_twitter, twitter_bearer_token, twitter_user_id, proxy)
-            )
-        )
+    # if twitter_bearer_token and twitter_user_id:
+    #     tasks.append(
+    #         asyncio.create_task(
+    #             twitter_monitor.run_monitor(bot_token, chat_id, thread_twitter, twitter_bearer_token, twitter_user_id, proxy)
+    #         )
+    #     )
 
     await asyncio.gather(*tasks)
 

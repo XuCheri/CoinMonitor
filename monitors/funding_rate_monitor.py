@@ -126,8 +126,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot = context.bot
     message = update.effective_message
     config = context.application.bot_data.get("monitor_config", {})
-    if message.message_thread_id == config.get("topic_id"):
-        log_info("📥 收到用户消息触发监控")
+    
+    if "数据" in message.text and message.message_thread_id == config.get("topic_id"):
+        log_info("📥 收到用户消息“监控”触发监测")
         try:
             timeout = aiohttp.ClientTimeout(total=20)
             async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
@@ -135,9 +136,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if alerts:
                     await send_alerts(bot, message.chat_id, message.message_thread_id, alerts)
                     log_info(f"📢 用户触发推送 {len(alerts)} 条资金费率预警")
+                else:
+                    await bot.send_message(
+                        chat_id=message.chat_id,
+                        message_thread_id=message.message_thread_id,
+                        text="✅ 当前暂无异常资金费率",
+                    )
         except Exception as e:
             log_error(f"❌ 用户触发监控出错: {e}")
             await notify_error(bot.token, message.chat_id, f"资金费率监控异常：{e}")
+
 
 async def run_monitor(bot_token, chat_id, topic_id, threshold=0.001):
     log_info("✅ 启动资金费率监控模块")
