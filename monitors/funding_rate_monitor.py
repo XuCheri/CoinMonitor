@@ -76,7 +76,7 @@ async def check_market(session, threshold):
     return alert_list
 
 
-async def run_monitor(bot_token, chat_id, topic_id, interval=60, threshold=0.001):
+async def run_monitor(bot_token, chat_id, topic_id, interval=1800, threshold=0.001):
     bot = Bot(token=bot_token)
     log_info("✅ 启动资金费率监控")
 

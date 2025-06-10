@@ -17,7 +17,7 @@ async def fetch_open_interest(session, symbol):
         data = await resp.json()
         return float(data['openInterest'])
 
-async def run_open_interest_monitor(bot_token, chat_id, topic_id, interval=300, threshold=0.1):
+async def run_open_interest_monitor(bot_token, chat_id, topic_id, interval=300, threshold=0.05):
     global previous_open_interest
     bot = Bot(token=bot_token)
     log_info("✅ 启动持仓变化监控")

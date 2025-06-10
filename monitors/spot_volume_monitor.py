@@ -8,7 +8,7 @@ async def fetch_spot_24hr_ticker(session):
     async with session.get(url) as resp:
         return await resp.json()
 
-async def run_spot_volume_monitor(bot_token, chat_id, topic_id, top_n=20, interval=300):
+async def run_spot_volume_monitor(bot_token, chat_id, topic_id, top_n=20, interval=86400):
     bot = Bot(token=bot_token)
     log_info("✅ 启动现货成交额排行榜监控")
 
