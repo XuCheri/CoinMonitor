@@ -1,12 +1,14 @@
 {
-  "bot_token": "1",
-  "chat_id": 1,
+  "bot_token": "你的TelegramBotToken",
+  "chat_id": "你的ChatID",
   "message_threads": {
-    "funding_rate": 1,
-    "spot_inflow": 1,
-    "other": 1
+    "funding_rate": 123,
+    "spot_volume": 456,
+    "twitter_monitor": 789
   },
   "funding_rate_threshold": 0.001,
   "check_interval": 60,
-  "spot_inflow_interval": 300
+  "twitter_bearer_token": "你的TwitterBearerToken",
+  "twitter_user_id": "目标用户的numeric ID",
+  "proxy": "http://127.0.0.1:7890"
 }

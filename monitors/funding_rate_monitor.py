@@ -1,8 +1,12 @@
 import aiohttp
 import asyncio
-from telegram import Bot
+from telegram import Bot, Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from datetime import datetime, timedelta, timezone
 from utils.logger import log_info, log_error, notify_error
+
+# 用于记录最近一次检查时间，避免重复触发
+last_checked_minute = -1
 
 async def fetch_json(session, url):
     async with session.get(url) as response:
@@ -75,42 +79,81 @@ async def check_market(session, threshold):
     alert_list.sort(key=lambda x: abs(x['funding_rate']), reverse=True)
     return alert_list
 
+async def send_alerts(bot, chat_id, topic_id, alerts):
+    message = "⚠️ <b>异常资金费率预警</b>\n\n"
+    for a in alerts:
+        msg = (
+            f"🚨 <b>{a['symbol']}</b>\n"
+            f"💰 资金费率：<code>{a['funding_rate']*100:.4f}%</code>\n"
+            f"📊 合约价格：<code>{a['mark_price']:.4f} USDT</code>\n"
+            f"💱 现货价格：<code>{a['spot_price_str']}</code>\n"
+            f"📈 24H涨跌幅：<code>{a['price_change']:.2f}%</code>\n"
+            f"⏰ 30m：<code>{a['change_30m']:.2f}%</code> | "
+            f"1H：<code>{a['change_1h']:.2f}%</code> | "
+            f"4H：<code>{a['change_4h']:.2f}%</code>\n"
+            f"🔄 成交额：<code>{a['volume']/1e6:.2f}M</code>\n"
+            f"🧾 持仓量：<code>{a['open_interest']:.2f}M</code>\n"
+            f"📅 结算时间：<code>{a['funding_time']}</code>\n\n"
+        )
+        if len(message) + len(msg) > 4000:
+            message += "⚠️ 消息过长已截断部分内容\n"
+            break
+        message += msg
 
-async def run_monitor(bot_token, chat_id, topic_id, interval=1800, threshold=0.001):
+    await bot.send_message(chat_id=chat_id, text=message, message_thread_id=topic_id, parse_mode="HTML")
+
+async def periodic_monitor(bot_token, chat_id, topic_id, threshold):
     bot = Bot(token=bot_token)
-    log_info("✅ 启动资金费率监控")
-
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
         while True:
-            try:
-                alerts = await check_market(session, threshold)
-                if alerts:
-                    message = "⚠️ <b>异常资金费率预警</b>\n\n"
-                    for a in alerts:
-                        msg = (
-                            f"🚨 <b>{a['symbol']}</b>\n"
-                            f"💰 资金费率：<code>{a['funding_rate']*100:.4f}%</code>\n"
-                            f"📊 合约价格：<code>{a['mark_price']:.4f} USDT</code>\n"
-                            f"💱 现货价格：<code>{a['spot_price_str']}</code>\n"
-                            f"📈 24H涨跌幅：<code>{a['price_change']:.2f}%</code>\n"
-                            f"⏰ 30m：<code>{a['change_30m']:.2f}%</code> | "
-                            f"1H：<code>{a['change_1h']:.2f}%</code> | "
-                            f"4H：<code>{a['change_4h']:.2f}%</code>\n"
-                            f"🔄 成交额：<code>{a['volume']/1e6:.2f}M</code>\n"
-                            f"🧾 持仓量：<code>{a['open_interest']:.2f}M</code>\n"
-                            f"📅 结算时间：<code>{a['funding_time']}</code>\n\n"
-                        )
-                        if len(message) + len(msg) > 4000:
-                            message += "⚠️ 消息过长已截断部分内容\n"
-                            break
-                        message += msg
+            now = datetime.now()
+            minute = now.minute
+            global last_checked_minute
+            if minute in (0, 30) and minute != last_checked_minute:
+                last_checked_minute = minute
+                try:
+                    alerts = await check_market(session, threshold)
+                    if alerts:
+                        await send_alerts(bot, chat_id, topic_id, alerts)
+                        log_info(f"📢 定时推送 {len(alerts)} 条资金费率预警")
+                except Exception as e:
+                    log_error(f"❌ 定时监控出错: {e}")
+                    await notify_error(bot_token, chat_id, f"资金费率监控异常：{e}")
+            await asyncio.sleep(10)
 
-                    await bot.send_message(chat_id=chat_id, text=message, message_thread_id=topic_id, parse_mode="HTML")
-                    log_info(f"📢 已推送 {len(alerts)} 条资金费率预警")
-                else:
-                    log_info("✅ 暂无异常资金费率")
-            except Exception as e:
-                log_error(f"❌ 资金费率监控出错: {e}")
-                await notify_error(bot_token, chat_id, f"资金费率监控异常：{e}")
-            await asyncio.sleep(interval)
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot = context.bot
+    message = update.effective_message
+    config = context.application.bot_data.get("monitor_config", {})
+    if message.message_thread_id == config.get("topic_id"):
+        log_info("📥 收到用户消息触发监控")
+        try:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+                alerts = await check_market(session, config.get("threshold", 0.001))
+                if alerts:
+                    await send_alerts(bot, message.chat_id, message.message_thread_id, alerts)
+                    log_info(f"📢 用户触发推送 {len(alerts)} 条资金费率预警")
+        except Exception as e:
+            log_error(f"❌ 用户触发监控出错: {e}")
+            await notify_error(bot.token, message.chat_id, f"资金费率监控异常：{e}")
+
+async def run_monitor(bot_token, chat_id, topic_id, threshold=0.001):
+    log_info("✅ 启动资金费率监控模块")
+    app = Application.builder().token(bot_token).build()
+
+    app.bot_data["monitor_config"] = {
+        "chat_id": chat_id,
+        "topic_id": topic_id,
+        "threshold": threshold,
+    }
+
+    app.add_handler(MessageHandler(filters.TEXT, message_handler))
+
+    asyncio.create_task(periodic_monitor(bot_token, chat_id, topic_id, threshold))
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
