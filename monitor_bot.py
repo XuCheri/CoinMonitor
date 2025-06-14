@@ -4,7 +4,8 @@ from monitors import (
     funding_rate_monitor,
     spot_volume_monitor,
     open_interest_monitor,
-    twitter_monitor
+    twitter_monitor,
+    price_spike_monitor
 )
 
 # === 加载配置文件 ===
@@ -21,6 +22,7 @@ thread_funding = config["message_threads"]["funding_rate"]
 thread_volume = config["message_threads"]["spot_volume"]
 thread_oi = config["message_threads"]["open_interest"]
 thread_twitter = config["message_threads"]["twitter_monitor"]
+thread_price_spike = config["message_threads"]["price_spike"]
 
 # === Twitter 监控相关 ===
 twitter_bearer_token = config.get("twitter_bearer_token")
@@ -31,7 +33,8 @@ async def main():
     tasks = [
         asyncio.create_task(funding_rate_monitor.run_monitor(bot_token, chat_id, thread_funding)),
         asyncio.create_task(spot_volume_monitor.run_spot_volume_monitor(bot_token, chat_id, thread_volume)),
-        asyncio.create_task(open_interest_monitor.run_open_interest_monitor(bot_token, chat_id, thread_oi))
+        asyncio.create_task(open_interest_monitor.run_open_interest_monitor(bot_token, chat_id, thread_oi)),
+        asyncio.create_task(price_spike_monitor.run_price_spike_monitor(bot_token, chat_id, thread_price_spike))
     ]
 
     # 如果配置了推特监控所需信息，启用推特监控

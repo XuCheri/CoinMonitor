@@ -4,7 +4,9 @@
   "message_threads": {
     "funding_rate": 123,
     "spot_volume": 456,
-    "twitter_monitor": 789
+    "open_interest": 666,
+    "twitter_monitor": 789,
+    "price_spike":666
   },
   "funding_rate_threshold": 0.001,
   "check_interval": 60,
