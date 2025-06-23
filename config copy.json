@@ -1,16 +1,47 @@
 {
-  "bot_token": "你的TelegramBotToken",
+  "telegram_token": "你的TelegramBotToken",
   "chat_id": "你的ChatID",
   "message_threads": {
     "funding_rate": 123,
     "spot_volume": 456,
     "open_interest": 666,
     "twitter_monitor": 789,
-    "price_spike":666
+    "price_spike": 666
   },
-  "funding_rate_threshold": 0.001,
-  "check_interval": 60,
-  "twitter_bearer_token": "你的TwitterBearerToken",
-  "twitter_user_id": "目标用户的numeric ID",
-  "proxy": "http://127.0.0.1:7890"
+  "proxy_url": "http://127.0.0.1:7890",
+  "monitors": {
+    "funding_rate": {
+      "enabled": true,
+      "interval": 60,
+      "threshold": 0.001
+    },
+    "open_interest": {
+      "enabled": true,
+      "interval": 60,
+      "threshold": 0.05,
+      "watchlist": ["BTCUSDT", "ETHUSDT"]
+    },
+    "price_spike": {
+      "enabled": true,
+      "interval": 60,
+      "watchlist": ["BTCUSDT", "ETHUSDT"],
+      "spike_config": {
+        "long_candle_spike": 0.01253,
+        "single_candle_spike": 0.02,
+        "price_change_1m": 0.015,
+        "price_change_5m": 0.02
+      }
+    },
+    "spot_volume": {
+      "enabled": true,
+      "interval": 3600,
+      "top_n": 20
+    },
+    "twitter_monitor": {
+      "enabled": true,
+      "interval": 300,
+      "bearer_token": "你的TwitterBearerToken",
+      "watch_ids": ["目标用户的numeric ID"]
+    }
+  }
 }
