@@ -284,8 +284,35 @@ class BotRunner:
             await loading_message.edit_text(f"❌ 持仓报告获取失败: {str(e)}")
 
     async def _mypos_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """处理 /mypos 命令，手动获取持仓报告（别名）"""
-        await self._position_handler(update, context)
+        """处理 /mypos 命令 - 获取个人持仓报告"""
+        if update.message is None:
+            return
+            
+        if "position_monitor" in self.monitors:
+            monitor = self.monitors["position_monitor"]
+            if hasattr(monitor, 'send_position_report'):
+                await monitor.send_position_report()
+            else:
+                await update.message.reply_text("❌ 持仓监控器不支持手动报告")
+        else:
+            await update.message.reply_text("❌ 持仓监控器未启用")
+
+    async def _test_oi_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /testoi 命令 - 测试持仓异动监控器"""
+        if not update.message or not update.message.text: return
+
+        parts = update.message.text.split()
+        symbol = parts[1].upper() if len(parts) > 1 else "BTCUSDT"
+        
+        if "open_interest" in self.monitors:
+            monitor = self.monitors["open_interest"]
+            if hasattr(monitor, 'test_monitor'):
+                result = await monitor.test_monitor(symbol)
+                await update.message.reply_html(result)
+            else:
+                await update.message.reply_text("❌ 持仓异动监控器不支持测试功能")
+        else:
+            await update.message.reply_text("❌ 持仓异动监控器未启用")
 
     def _setup_handlers(self):
         if not self.app: return
@@ -295,6 +322,7 @@ class BotRunner:
         self.app.add_handler(CommandHandler("funding", self._funding_handler))
         self.app.add_handler(CommandHandler("position", self._position_handler))
         self.app.add_handler(CommandHandler("mypos", self._mypos_handler))
+        self.app.add_handler(CommandHandler("testoi", self._test_oi_handler))
         log_info("✅ 命令处理器设置完毕。")
     
     async def run_async(self):
