@@ -6,9 +6,15 @@
     "spot_volume": 456,
     "open_interest": 666,
     "twitter_monitor": 789,
-    "price_spike": 666
+    "price_spike": 666,
+    "position_monitor": 999
   },
   "proxy_url": "http://127.0.0.1:7890",
+  "binance": {
+    "api_key": "你的币安API密钥",
+    "api_secret": "你的币安API密钥",
+    "testnet": false
+  },
   "monitors": {
     "funding_rate": {
       "enabled": true,
@@ -42,6 +48,14 @@
       "interval": 300,
       "bearer_token": "你的TwitterBearerToken",
       "watch_ids": ["目标用户的numeric ID"]
+    },
+    "position_monitor": {
+      "enabled": false,
+      "interval": 3600,
+      "auto_report": true,
+      "report_time": "09:00",
+      "include_history": true,
+      "history_days": 7
     }
   }
 }

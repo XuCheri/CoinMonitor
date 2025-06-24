@@ -8,6 +8,7 @@ from .open_interest_monitor import OpenInterestMonitor
 from .price_spike_monitor import PriceSpikeMonitor
 from .spot_volume_monitor import SpotVolumeMonitor
 from .twitter_monitor import TwitterMonitor
+from .position_monitor import PositionMonitor
 
 __all__ = [
     "BaseMonitor",
@@ -16,4 +17,5 @@ __all__ = [
     "PriceSpikeMonitor",
     "SpotVolumeMonitor",
     "TwitterMonitor",
+    "PositionMonitor",
 ] 

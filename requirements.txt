@@ -3,3 +3,7 @@ requests
 aiohttp
 matplotlib
 mplfinance
+python-binance
+pandas
+numpy
+python-dateutil

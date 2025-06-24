@@ -1,10 +1,12 @@
 # CoinMonitor - 加密货币市场监控机器人
 
-一个基于 Telegram Bot 的加密货币市场监控系统，支持多种监控功能，包括资金费率、持仓量、价格异动、现货成交额和Twitter监控。**自动监测所有币种**，无需手动配置监控列表。
+一个基于 Telegram Bot 的加密货币市场监控系统，支持多种监控功能，包括资金费率、持仓量、价格异动、现货成交额、Twitter监控和**账户持仓监控**。**自动监测所有币种**，无需手动配置监控列表。
 
 ## 🚀 最新更新
 
 ### 重大改进 (2025-06-24)
+- 🌟 **新增持仓监控器** - 支持获取币安账户当前持仓和历史仓位记录
+- 🌟 **持仓命令增强** - 支持参数化查询（/position [天数]）和别名命令（/mypos）
 - 🌟 **自动监测所有币种** - 所有监控器现在自动获取并监测币安的所有可用交易对
 - 🔧 **资金费率监控优化** - 添加 `/funding` 命令，支持手动触发检查
 - 🛡️ **网络连接优化** - 修复代理配置问题，添加重试机制和后备方案
@@ -48,9 +50,20 @@
    - ⏰ 实时发送通知
    - 🔧 支持自定义监控用户列表
 
+6. **持仓监控** (`PositionMonitor`) 🆕
+   - 📊 **获取币安账户当前持仓**（期货+现货）
+   - 📈 **历史交易记录查询**（支持自定义时间范围）
+   - 💰 **盈亏分析**（未实现盈亏、已实现盈亏）
+   - ⏰ **定期报告推送**（可配置时间间隔）
+   - 🔧 **手动查询**（支持 `/position [天数]` 和 `/mypos [天数]` 命令）
+   - 📋 **详细持仓报告**（包含杠杆、开仓价、标记价等）
+   - 🎯 **参数化查询**（支持1-30天历史数据查询）
+
 ### 交互命令
 - `/status` - 查看所有监控器状态和配置
 - `/funding` - **手动触发资金费率检查**
+- `/position [天数]` - **手动获取持仓报告**（支持1-30天参数）🆕
+- `/mypos [天数]` - **持仓报告别名命令**（功能同/position）🆕
 - `/config <monitor> [action] [params]` - 动态配置监控器
 - `/coin <symbol>` - 查询单个币种的综合信息
 
@@ -74,6 +87,11 @@ pip install -r requirements.txt
   "telegram_token": "你的TelegramBotToken",
   "chat_id": "你的ChatID",
   "proxy_url": "http://127.0.0.1:7890",
+  "binance": {
+    "api_key": "你的币安API密钥",
+    "api_secret": "你的币安API密钥",
+    "testnet": false
+  },
   "monitors": {
     "funding_rate": {
       "enabled": true,
@@ -106,10 +124,21 @@ pip install -r requirements.txt
       "interval": 300,
       "bearer_token": "你的TwitterBearerToken",
       "watch_ids": ["目标用户的numeric ID"]
+    },
+    "position_monitor": {
+      "enabled": false,
+      "topic_id": 999,
+      "interval": 3600,
+      "auto_report": true,
+      "report_time": "09:00",
+      "include_history": true,
+      "history_days": 7
     }
   }
 }
 ```
+
+**注意**: 持仓监控器需要配置币安API密钥才能使用。请确保API密钥具有读取权限。
 
 ## 🚀 运行
 
@@ -132,6 +161,35 @@ python monitor_bot.py
 # 查看资金费率监控器状态
 /config funding_rate
 ```
+
+### 持仓监控
+```bash
+# 手动获取持仓报告（默认近7天历史）
+/position
+
+# 获取指定天数的持仓报告
+/position 3    # 近3天历史
+/position 14   # 近14天历史
+
+# 使用别名命令
+/mypos         # 等同于 /position
+/mypos 1       # 近1天历史
+
+# 查看持仓监控器状态
+/config position_monitor
+
+# 修改配置参数
+/config position_monitor set interval 1800
+/config position_monitor set history_days 14
+/config position_monitor set auto_report false
+```
+
+**持仓监控器功能：**
+- 📊 **实时持仓监控** - 获取期货和现货账户的当前持仓状态
+- 📈 **历史交易记录** - 查看指定时间范围内的交易历史（1-30天）
+- 💰 **盈亏分析** - 计算未实现盈亏和已实现盈亏
+- ⏰ **定期报告** - 支持定时推送持仓报告
+- 🔧 **手动查询** - 支持参数化查询，灵活获取不同时间段的数据
 
 ### 配置管理
 使用 `/config` 命令动态管理监控器：
@@ -241,6 +299,22 @@ class NewMonitor(BaseMonitor):
 
 欢迎提交 Issue 和 Pull Request！
 
-## �� 许可证
+## 📄 许可证
 
 MIT License
+
+### 配置参数说明
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | boolean | false | 是否启用监控器 |
+| `topic_id` | integer | 999 | Telegram话题ID |
+| `interval` | integer | 3600 | 检查间隔（秒） |
+| `auto_report` | boolean | true | 是否自动发送报告 |
+| `report_time` | string | "09:00" | 自动报告时间 |
+| `include_history` | boolean | true | 是否包含历史交易 |
+| `history_days` | integer | 7 | 历史记录天数 |
+
+**持仓监控器特殊参数：**
+- `api_key` / `api_secret` - 币安API密钥（在binance配置中）
+- `testnet` - 是否使用测试网络（在binance配置中）

@@ -17,7 +17,8 @@ from monitors import (
     OpenInterestMonitor,
     PriceSpikeMonitor,
     SpotVolumeMonitor,
-    TwitterMonitor
+    TwitterMonitor,
+    PositionMonitor
 )
 
 # 映射监控器名称到类
@@ -27,6 +28,7 @@ MONITOR_CLASSES = {
     "price_spike": PriceSpikeMonitor,
     "spot_volume": SpotVolumeMonitor,
     "twitter_monitor": TwitterMonitor,
+    "position_monitor": PositionMonitor,
 }
 
 class BotRunner:
@@ -88,6 +90,16 @@ class BotRunner:
                         "proxy_url": self.config.get("proxy_url"),
                         **monitor_config,
                     }
+                    
+                    # 为持仓监控器添加币安API配置
+                    if name == "position_monitor":
+                        binance_config = self.config.get("binance", {})
+                        params.update({
+                            "api_key": binance_config.get("api_key", ""),
+                            "api_secret": binance_config.get("api_secret", ""),
+                            "testnet": binance_config.get("testnet", False),
+                        })
+                    
                     monitor = monitor_class(**params)
                     self.monitors[name] = monitor
                     log_info(f"✅ 成功初始化: {monitor_class.__name__}")
@@ -238,12 +250,51 @@ class BotRunner:
             log_error(f"❌ 手动资金费率检查失败: {e}")
             await loading_message.edit_text(f"❌ 资金费率检查失败: {str(e)}")
 
+    async def _position_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /position 命令，手动获取持仓报告"""
+        if not update.message or not update.message.text:
+            return
+            
+        position_monitor = self.monitors.get("position_monitor")
+        if not position_monitor:
+            await update.message.reply_html("❌ 持仓监控器未启用或未找到。")
+            return
+        
+        # 解析参数
+        parts = update.message.text.split()
+        history_days = 7  # 默认7天
+        
+        if len(parts) > 1:
+            try:
+                history_days = int(parts[1])
+                if history_days <= 0 or history_days > 30:
+                    await update.message.reply_html("❌ 历史天数必须在1-30之间。")
+                    return
+            except ValueError:
+                await update.message.reply_html("❌ 参数格式错误。正确用法：<code>/position [天数]</code>\n例如：<code>/position 3</code> 获取近3天历史")
+                return
+        
+        loading_message = await update.message.reply_html(f"⏳ 正在获取持仓报告（近{history_days}天历史）...")
+        
+        try:
+            report = await position_monitor.get_manual_report(history_days)
+            await loading_message.edit_text(report, parse_mode="HTML")
+        except Exception as e:
+            log_error(f"❌ 手动持仓报告获取失败: {e}")
+            await loading_message.edit_text(f"❌ 持仓报告获取失败: {str(e)}")
+
+    async def _mypos_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /mypos 命令，手动获取持仓报告（别名）"""
+        await self._position_handler(update, context)
+
     def _setup_handlers(self):
         if not self.app: return
         self.app.add_handler(CommandHandler("status", self._status_handler))
         self.app.add_handler(CommandHandler("config", self._config_handler))
         self.app.add_handler(CommandHandler("coin", self._coin_handler))
         self.app.add_handler(CommandHandler("funding", self._funding_handler))
+        self.app.add_handler(CommandHandler("position", self._position_handler))
+        self.app.add_handler(CommandHandler("mypos", self._mypos_handler))
         log_info("✅ 命令处理器设置完毕。")
     
     async def run_async(self):

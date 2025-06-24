@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  coinmonitor:
+    build: .
+    container_name: coinmonitor-bot
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./logs:/app/logs
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - coinmonitor-network
+
+  # 可选：添加代理服务
+  proxy:
+    image: shadowsocks/shadowsocks-libev
+    container_name: coinmonitor-proxy
+    restart: unless-stopped
+    ports:
+      - "7890:1080"
+    environment:
+      - PASSWORD=your-proxy-password
+      - METHOD=aes-256-gcm
+    networks:
+      - coinmonitor-network
+
+networks:
+  coinmonitor-network:
+    driver: bridge 
