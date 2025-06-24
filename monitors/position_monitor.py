@@ -33,7 +33,7 @@ class PositionMonitor(BaseMonitor):
                  interval: int = 3600, api_key: str = "", api_secret: str = "", 
                  testnet: bool = False, auto_report: bool = True, 
                  report_time: str = "09:00", include_history: bool = True, 
-                 history_days: int = 7, **kwargs):
+                 history_days: int = 1, **kwargs):
         super().__init__(bot, chat_id, topic_id, proxy_url, interval, **kwargs)
         
         self.api_key = api_key
@@ -157,7 +157,7 @@ class PositionMonitor(BaseMonitor):
             log_error(f"获取当前持仓失败: {e}")
             raise
     
-    async def get_position_history(self, days: int = 7) -> List[Dict[str, Any]]:
+    async def get_position_history(self, days: int = 1) -> List[Dict[str, Any]]:
         """获取历史仓位记录"""
         if not self.binance_client:
             raise Exception("币安API客户端未初始化")
@@ -216,57 +216,173 @@ class PositionMonitor(BaseMonitor):
         }
     
     def format_position_report(self, current_positions: Dict[str, Any], 
-                             position_history: Optional[List[Dict[str, Any]]] = None) -> str:
-        """格式化持仓报告"""
-        report = "📊 <b>币安账户持仓报告</b>\n\n"
+                             position_history: Optional[List[Dict[str, Any]]] = None,
+                             actual_days: Union[int, None] = None) -> List[str]:
+        """格式化持仓报告，返回多个部分用于分段推送"""
+        parts = []
+        
+        # 第一部分：标题 + 期货持仓 + 现货余额
+        part1 = "📊 <b>币安账户持仓报告</b>\n\n"
         
         # 期货持仓
         futures_positions = current_positions.get('futures', [])
         if futures_positions:
-            report += "🎯 <b>期货持仓</b>\n"
+            part1 += "🎯 <b>期货持仓</b>\n"
             metrics = self.calculate_position_metrics(futures_positions)
             
-            report += f"总持仓数: {metrics['total_positions']}\n"
-            report += f"多仓: {metrics['long_positions']} | 空仓: {metrics['short_positions']}\n"
-            report += f"平均杠杆: {metrics['avg_leverage']:.1f}x\n"
-            report += f"未实现盈亏: {metrics['total_unrealized_pnl']:.2f} USDT\n\n"
+            part1 += f"总持仓数: {metrics['total_positions']}\n"
+            part1 += f"多仓: {metrics['long_positions']} | 空仓: {metrics['short_positions']}\n"
+            part1 += f"平均杠杆: {metrics['avg_leverage']:.1f}x\n"
+            part1 += f"未实现盈亏: {metrics['total_unrealized_pnl']:.2f} USDT\n\n"
             
             for pos in futures_positions:
                 pnl_percent = (pos['unrealized_pnl'] / (pos['size'] * pos['entry_price'])) * 100
-                report += f"• {pos['symbol']} {pos['side']}\n"
-                report += f"  数量: {pos['size']:.4f} | 杠杆: {pos['leverage']}x\n"
-                report += f"  开仓价: {pos['entry_price']:.4f} | 标记价: {pos['mark_price']:.4f}\n"
-                report += f"  盈亏: {pos['unrealized_pnl']:.2f} USDT ({pnl_percent:+.2f}%)\n\n"
+                part1 += f"• {pos['symbol']} {pos['side']}\n"
+                part1 += f"  数量: {pos['size']:.4f} | 杠杆: {pos['leverage']}x\n"
+                part1 += f"  开仓价: {pos['entry_price']:.4f} | 标记价: {pos['mark_price']:.4f}\n"
+                part1 += f"  盈亏: {pos['unrealized_pnl']:.2f} USDT ({pnl_percent:+.2f}%)\n\n"
         else:
-            report += "🎯 <b>期货持仓</b>: 无持仓\n\n"
+            part1 += "🎯 <b>期货持仓</b>: 无持仓\n\n"
         
         # 现货余额
         spot_balances = current_positions.get('spot', [])
         if spot_balances:
-            report += "💰 <b>现货余额</b>\n"
+            part1 += "💰 <b>现货余额</b>\n"
             total_spot_value = 0
             
             for balance in spot_balances:
                 if balance['asset'] != 'USDT':
-                    # 这里可以添加获取实时价格来计算USDT价值
-                    report += f"• {balance['asset']}: {balance['total']:.6f}\n"
+                    part1 += f"• {balance['asset']}: {balance['total']:.6f}\n"
                 else:
-                    report += f"• {balance['asset']}: {balance['total']:.2f}\n"
+                    part1 += f"• {balance['asset']}: {balance['total']:.2f}\n"
                     total_spot_value += balance['total']
             
-            report += f"\n现货总价值: {total_spot_value:.2f} USDT\n\n"
+            part1 += f"\n现货总价值: {total_spot_value:.2f} USDT\n\n"
         
-        # 历史交易记录
+        part1 += f"⏰ 报告时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        parts.append(part1)
+        
+        # 第二部分：历史仓位盈亏详情（如果有历史数据且启用，自动分割）
         if position_history and self.include_history:
-            report += "📈 <b>最近交易记录</b>\n"
-            recent_trades = position_history[-10:]  # 最近10笔交易
-            
-            for trade in recent_trades:
-                report += f"• {trade['symbol']} {trade['side']} {trade['quantity']:.4f} @ {trade['price']:.4f}\n"
-                report += f"  盈亏: {trade['realized_pnl']:.2f} USDT | 时间: {trade['time'][:19]}\n\n"
+            MAX_LEN = 3500
+            days_to_show = actual_days if actual_days is not None else self.history_days
+            if days_to_show == 1:
+                part2_header = "📈 <b>今日持仓盈亏详情</b>\n\n"
+            else:
+                part2_header = f"📈 <b>历史持仓盈亏详情（近{days_to_show}天）</b>\n\n"
+
+            from collections import defaultdict, deque
+            symbol_long_queue = defaultdict(deque)
+            symbol_short_queue = defaultdict(deque)
+            realized_pnl_records = []
+            sorted_trades = sorted(position_history, key=lambda x: x['time'])
+
+            for trade in sorted_trades:
+                symbol = trade['symbol']
+                side = trade['side']
+                qty = trade['quantity']
+                price = trade['price']
+                time_str = trade['time']
+
+                if side == 'BUY':
+                    remaining_qty = qty
+                    while remaining_qty > 0 and symbol_short_queue[symbol]:
+                        pos = symbol_short_queue[symbol][0]
+                        close_qty = min(remaining_qty, pos['quantity'])
+                        pnl = (pos['price'] - price) * close_qty
+                        realized_pnl_records.append({
+                            'symbol': symbol,
+                            'side': 'SHORT',
+                            'open_price': pos['price'],
+                            'close_price': price,
+                            'quantity': close_qty,
+                            'pnl': pnl,
+                            'time': time_str
+                        })
+                        pos['quantity'] -= close_qty
+                        remaining_qty -= close_qty
+                        if pos['quantity'] == 0:
+                            symbol_short_queue[symbol].popleft()
+                    if remaining_qty > 0:
+                        symbol_long_queue[symbol].append({'quantity': remaining_qty, 'price': price, 'time': time_str})
+                elif side == 'SELL':
+                    remaining_qty = qty
+                    while remaining_qty > 0 and symbol_long_queue[symbol]:
+                        pos = symbol_long_queue[symbol][0]
+                        close_qty = min(remaining_qty, pos['quantity'])
+                        pnl = (price - pos['price']) * close_qty
+                        realized_pnl_records.append({
+                            'symbol': symbol,
+                            'side': 'LONG',
+                            'open_price': pos['price'],
+                            'close_price': price,
+                            'quantity': close_qty,
+                            'pnl': pnl,
+                            'time': time_str
+                        })
+                        pos['quantity'] -= close_qty
+                        remaining_qty -= close_qty
+                        if pos['quantity'] == 0:
+                            symbol_long_queue[symbol].popleft()
+                    if remaining_qty > 0:
+                        symbol_short_queue[symbol].append({'quantity': remaining_qty, 'price': price, 'time': time_str})
+
+            # 合并每个symbol每个方向的所有平仓明细
+            symbol_side_stats = defaultdict(lambda: {'total_qty': 0.0, 'open_sum': 0.0, 'close_sum': 0.0, 'pnl': 0.0, 'last_time': ''})
+            for record in realized_pnl_records:
+                key = (record['symbol'], record['side'])
+                q = float(record['quantity'])
+                open_p = float(record['open_price'])
+                close_p = float(record['close_price'])
+                pnl = float(record['pnl'])
+                symbol_side_stats[key]['total_qty'] = float(symbol_side_stats[key]['total_qty']) + q
+                symbol_side_stats[key]['open_sum'] = float(symbol_side_stats[key]['open_sum']) + open_p * q
+                symbol_side_stats[key]['close_sum'] = float(symbol_side_stats[key]['close_sum']) + close_p * q
+                symbol_side_stats[key]['pnl'] = float(symbol_side_stats[key]['pnl']) + pnl
+                if record['time'] > symbol_side_stats[key]['last_time']:
+                    symbol_side_stats[key]['last_time'] = record['time']
+
+            # 生成报告
+            events = []
+            for (symbol, side), stats in symbol_side_stats.items():
+                total_qty = float(stats['total_qty'])
+                if total_qty == 0:
+                    continue
+                avg_open = float(stats['open_sum']) / total_qty if total_qty else 0
+                avg_close = float(stats['close_sum']) / total_qty if total_qty else 0
+                total_pnl = float(stats['pnl'])
+                last_time = stats['last_time'] or ''
+                events.append({
+                    'symbol': symbol,
+                    'side': side,
+                    'qty': total_qty,
+                    'avg_open': avg_open,
+                    'avg_close': avg_close,
+                    'pnl': total_pnl,
+                    'time': last_time
+                })
+            events.sort(key=lambda x: x['time'], reverse=True)
+
+            buf = part2_header
+            for e in events:
+                if e['pnl'] >= 0:
+                    pnl_str = f"<b><code>+{e['pnl']:.2f} USDT</code></b> 🟢"
+                else:
+                    pnl_str = f"<b><code>{e['pnl']:.2f} USDT</code></b> 🔴"
+                event_str = (f"• <b>{e['symbol']}</b> <b>{e['side']}</b>\n"
+                             f"  数量: <code>{e['qty']:.4f}</code>\n"
+                             f"  开均价: <code>{e['avg_open']:.4f}</code>  平均价: <code>{e['avg_close']:.4f}</code>\n"
+                             f"  盈亏: {pnl_str}\n"
+                             f"  时间: <code>{e['time'][:16].replace('T', ' ')}</code>\n")
+                if len(buf) + len(event_str) > MAX_LEN:
+                    parts.append(buf)
+                    buf = part2_header + event_str
+                else:
+                    buf += event_str
+            if buf != part2_header:
+                parts.append(buf)
         
-        report += f"⏰ 报告时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        return report
+        return parts
     
     async def check(self):
         """执行持仓检查"""
@@ -274,21 +390,16 @@ class PositionMonitor(BaseMonitor):
             # 获取当前持仓
             current_positions = await self.get_current_positions()
             self.current_positions = current_positions
-            
             # 获取历史仓位（如果需要）
             position_history: Optional[List[Dict[str, Any]]] = None
             if self.include_history:
                 position_history = await self.get_position_history(self.history_days)
                 self.position_history = position_history
-            
             # 生成报告
-            report = self.format_position_report(current_positions, position_history)
-            
-            # 发送报告
-            await self.send_message(report, parse_mode="HTML")
-            
+            parts = self.format_position_report(current_positions, position_history, actual_days=self.history_days)
+            for part in parts:
+                await self.send_message(part, parse_mode="HTML")
             log_info("✅ 持仓报告已发送")
-            
         except Exception as e:
             log_error(f"❌ 持仓检查失败: {e}")
             error_msg = f"<b>持仓监控异常</b>\n<pre>{str(e)}</pre>"
@@ -313,7 +424,8 @@ class PositionMonitor(BaseMonitor):
             # 使用传入的天数，如果没有传入则使用默认设置
             days = history_days if history_days is not None else self.history_days
             position_history = await self.get_position_history(days) if self.include_history else None
-            return self.format_position_report(current_positions, position_history)
+            parts = self.format_position_report(current_positions, position_history, actual_days=days)
+            return "\n\n".join(parts)
         except Exception as e:
             return f"❌ 获取持仓报告失败: {str(e)}"
     

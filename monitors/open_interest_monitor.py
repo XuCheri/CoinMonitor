@@ -4,14 +4,22 @@ import io
 from typing import Optional, cast, List, Dict, Any
 
 import aiohttp
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 from telegram import Bot
+import matplotlib.font_manager as fm
+from mplfinance.original_flavor import candlestick_ohlc
+import numpy as np
 
 from .base_monitor import BaseMonitor
 from utils.logger import log_error, log_info
 
+font_path = 'C:/Windows/Fonts/msyh.ttc'
+my_font = fm.FontProperties(fname=font_path)
+matplotlib.rcParams['font.sans-serif'] = [my_font.get_name()]
+matplotlib.rcParams['axes.unicode_minus'] = False  # 解决负号显示为方块的问题
 
 class OpenInterestMonitor(BaseMonitor):
     """
@@ -205,73 +213,93 @@ class OpenInterestMonitor(BaseMonitor):
         return status
 
     async def _generate_chart(self, symbol: str, price_data: list) -> io.BytesIO:
-        """生成包含价格、持仓量历史和多空比的图表。"""
-        # 1. 并发获取历史数据
+        """生成币安APP风格的价格K线+持仓量+O.I. NV+多空比图表"""
+        # 1. 数据准备
+        # price_data: [(timestamp, open, high, low, close, volume), ...]
+        df_price = pd.DataFrame(price_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df_price['timestamp'] = pd.to_datetime(df_price['timestamp'], unit='ms')
+        df_price.set_index('timestamp', inplace=True)
+        # 获取持仓量和多空比历史（与check逻辑一致）
         tasks = [
             self._fetch_binance_data("/futures/data/openInterestHist", {'symbol': symbol, 'period': '5m', 'limit': 48}),
             self._fetch_binance_data("/futures/data/globalLongShortAccountRatio", {'symbol': symbol, 'period': '5m', 'limit': 48})
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
         oi_hist_raw, ls_hist_raw = results[0], results[1]
-
-        if isinstance(oi_hist_raw, Exception):
-            raise Exception(f"Failed to fetch OI history for chart: {oi_hist_raw}")
-        assert not isinstance(oi_hist_raw, BaseException)
-
-        if isinstance(ls_hist_raw, Exception):
-            raise Exception(f"Failed to fetch L/S ratio history for chart: {ls_hist_raw}")
-        assert not isinstance(ls_hist_raw, BaseException)
-
         oi_data = [(int(d['timestamp']), float(d['sumOpenInterest'])) for d in oi_hist_raw]
         ls_data = [(int(d['timestamp']), float(d['longShortRatio'])) for d in ls_hist_raw]
-        
-        # 2. 创建 Pandas DataFrames
-        df_price = pd.DataFrame(price_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']) # type: ignore
-        df_price['timestamp'] = pd.to_datetime(df_price['timestamp'], unit='ms')
-        df_price.set_index('timestamp', inplace=True)
-
-        df_oi = pd.DataFrame(oi_data, columns=['timestamp', 'oi']) # type: ignore
+        df_oi = pd.DataFrame(oi_data, columns=['timestamp', 'oi'])
         df_oi['timestamp'] = pd.to_datetime(df_oi['timestamp'], unit='ms')
         df_oi.set_index('timestamp', inplace=True)
-
-        df_ls = pd.DataFrame(ls_data, columns=['timestamp', 'ls_ratio']) # type: ignore
+        df_ls = pd.DataFrame(ls_data, columns=['timestamp', 'ls_ratio'])
         df_ls['timestamp'] = pd.to_datetime(df_ls['timestamp'], unit='ms')
         df_ls.set_index('timestamp', inplace=True)
-
-        # 3. 绘制图表
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True, gridspec_kw={'height_ratios': [3, 1.5, 1]})
-        fig.tight_layout(pad=3.0)
-        ax1.set_title(f"{symbol} Price & OI Overview", fontsize=14)
-
-        # 价格 K线
-        for i in range(len(df_price)):
-            o, h, l, c = df_price.iloc[i][['open', 'high', 'low', 'close']]
-            color = 'g' if c >= o else 'r'
-            ax1.plot([df_price.index[i], df_price.index[i]], [l, h], color=color, linewidth=1, alpha=0.8)
-            ax1.plot([df_price.index[i], df_price.index[i]], [o, c], color=color, linewidth=5, solid_capstyle='round')
-        ax1.set_ylabel("Price (USDT)")
-        ax1.grid(True)
-
-        # 持仓量
-        ax2.bar(df_oi.index, df_oi['oi'], color='lightgreen', width=0.002, label='Open Interest')
-        ax2.plot(df_oi.index, df_oi['oi'].rolling(3).mean(), color='orange', linewidth=1.5, label='OI 3P MA')
-        ax2.set_ylabel("Open Interest")
-        ax2.legend()
-        ax2.grid(True)
-
-        # 多空比
-        ax3.bar(df_ls.index, df_ls['ls_ratio'], color='lightblue', width=0.002, label='L/S Ratio')
-        ax3.plot(df_ls.index, df_ls['ls_ratio'].rolling(3).mean(), color='gold', linewidth=1.5, label='L/S 3P MA')
-        ax3.set_ylabel("L/S Ratio")
-        ax3.set_xlabel("Time")
-        ax3.legend()
-        ax3.grid(True)
-        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-
-        # 4. 保存图表到内存
+        # 区间裁剪（与K线对齐）
+        start_time = df_price.index[0]
+        end_time = df_price.index[-1]
+        df_oi = df_oi[(df_oi.index >= start_time) & (df_oi.index <= end_time)]
+        df_ls = df_ls[(df_ls.index >= start_time) & (df_ls.index <= end_time)]
+        # 2. 绘图
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+        # 主图：K线+底部绿色持仓量柱状+O.I. NV
+        ohlc = []
+        for idx, row in df_price.iterrows():
+            t = mdates.date2num(idx)
+            ohlc.append([t, row['open'], row['high'], row['low'], row['close']])
+        ax1.set_facecolor('white')
+        ax1.spines['top'].set_visible(False)
+        ax1.spines['right'].set_visible(False)
+        ax1.spines['left'].set_color('#888')
+        ax1.spines['bottom'].set_color('#888')
+        ax1.tick_params(axis='both', colors='#444', labelsize=12)
+        # K线
+        bar_width = float((mdates.date2num(df_price.index[1]) - mdates.date2num(df_price.index[0])) * 0.7)
+        candlestick_ohlc(ax1, ohlc, width=bar_width, colorup='#e54d42', colordown='#39b54a', alpha=0.95)
+        # 底部绿色持仓量柱状
+        price_min = min(df_price['low'])
+        price_max = max(df_price['high'])
+        price_range = price_max - price_min
+        oi_max = df_oi['oi'].max() if len(df_oi) > 0 else 1
+        oi_height = price_range * 0.10
+        norm_oi = df_oi['oi'] / oi_max * oi_height if len(df_oi) > 0 else np.zeros(len(df_price))
+        ax1.bar(df_price.index, norm_oi, width=bar_width, color='#39b54a', alpha=0.28, label='持仓量', align='center', bottom=price_min)
+        # O.I. NV名义价值线
+        oi_nv_raw = df_oi['oi'] * df_price['close'] if len(df_oi) > 0 else np.zeros(len(df_price))
+        oi_nv_max = oi_nv_raw.max() if len(df_oi) > 0 else 1
+        norm_oi_nv = oi_nv_raw / oi_nv_max * oi_height if len(df_oi) > 0 else np.zeros(len(df_price))
+        ax1.plot(df_price.index, norm_oi_nv + price_min, color='#ffce34', linewidth=2, label='O.I. NV（名义价值）', alpha=0.95)
+        ax1.set_ylabel("价格 (USDT)", fontsize=13, fontweight='bold', color='#222', fontproperties=my_font)
+        ax1.grid(False)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.setp(ax1.xaxis.get_majorticklabels(), rotation=0, fontproperties=my_font, color='#444')
+        handles, labels = ax1.get_legend_handles_labels()
+        ax1.legend(handles, labels, loc='upper right', fontsize=11, prop=my_font, frameon=False)
+        ax1.set_title(f"{symbol} 持仓异动分析", fontsize=15, fontweight='bold', color='#222', fontproperties=my_font, pad=10)
+        # 多空比区块
+        ls_ratio = df_ls['ls_ratio']
+        bar_width2 = float((mdates.date2num(df_ls.index[1]) - mdates.date2num(df_ls.index[0])) * 0.7) if len(df_ls) > 1 else 0.02
+        long_mask = ls_ratio >= 1
+        short_mask = ls_ratio < 1
+        ax2.bar(df_ls.index[long_mask], ls_ratio[long_mask], color='#39b54a', width=bar_width2, label='多头比例', alpha=0.7, align='center')
+        ax2.bar(df_ls.index[short_mask], ls_ratio[short_mask], color='#e54d42', width=bar_width2, label='空头比例', alpha=0.7, align='center')
+        ax2.axhline(y=1.0, color='#607d8b', linestyle='--', alpha=0.7, linewidth=2)
+        ax2.text(df_ls.index[0] if len(df_ls) > 0 else df_price.index[0], 1.0, ' 中性线', verticalalignment='bottom', fontsize=11, color='#607d8b', fontproperties=my_font)
+        ax2.set_ylabel("多空比", fontsize=14, fontweight='bold', fontproperties=my_font)
+        ax2.set_xlabel("时间", fontsize=14, fontweight='bold', fontproperties=my_font)
+        ax2.grid(False)
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        ax2.legend(handles2, labels2, loc='upper left', fontsize=12, prop=my_font, frameon=False)
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax2.xaxis.set_major_locator(mdates.MinuteLocator(interval=5))
+        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, fontproperties=my_font)
+        # 统计信息
+        if len(df_price) > 0:
+            price_change = ((df_price['close'].iloc[-1] - df_price['close'].iloc[0]) / df_price['close'].iloc[0]) * 100
+            oi_change = ((df_oi['oi'].iloc[-1] - df_oi['oi'].iloc[0]) / df_oi['oi'].iloc[0]) * 100 if len(df_oi) > 0 else 0
+            stats_text = f"区间变化: 价格 {price_change:+.2f}% | 持仓量 {oi_change:+.2f}%"
+            fig.text(0.5, 0.02, stats_text, ha='center', fontsize=11, bbox=dict(boxstyle='round,pad=0.5', facecolor='#ecf0f1', alpha=0.8), fontproperties=my_font)
         buf = io.BytesIO()
-        plt.savefig(buf, format='png')
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='#f8f9fa', edgecolor='none')
         plt.close(fig)
         buf.seek(0)
         return buf

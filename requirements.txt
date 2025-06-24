@@ -7,3 +7,4 @@ python-binance
 pandas
 numpy
 python-dateutil
+seaborn
